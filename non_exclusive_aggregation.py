@@ -4,39 +4,22 @@ from typing import Any
 from collections.abc import Callable
 from itertools import product
 
-# Define the categorical bins based on the metadata
-gender_bins = {"1": "Menn", "2": "Kvinner"}
 
-# Generate synthetic data
-np.random.seed(42)
-num_samples = 100
-
-synthetic_data = pd.DataFrame({
-    "Tid": np.random.choice(["2021", "2022", "2023"], num_samples),
-    "UtdanningOppl": np.random.choice(list(range(1,19)), num_samples),
-    "Kjonn": np.random.choice(list(gender_bins.keys()), num_samples),
-    "Alder": np.random.randint(15, 67, num_samples),  # Ages between 15 and 66
-    "syss_student": np.random.choice(["01", "02", "03", "04"], num_samples),
-    "n": 1
-})
-
-
-# Writing a genaralized function
-def parse_mapping(mapping, x: pd.Series):
+def parse_mapping(mapping: list[Any] | str, x: pd.Series) -> list[Any] | str:
     if isinstance(mapping, str) and mapping == "__ALL__":
-        return x.unique()
+        return list(x.unique())
     else:
         return mapping
 
 
 def all_combos_non_exclusive_agg(df: pd.DataFrame, 
                                  groupcols: list[str] = [], 
-                                 category_mappings: dict[str, dict[Any, Any]] = {}, 
+                                 category_mappings: dict[str, dict[str, list[Any] | str]] = {}, 
                                  valuecols: list[str] = [], 
                                  aggargs: None | dict[str, Any] | Callable | str | list  = None,
                                  totalcodes: None | dict[str, str] = None, 
                                  keep_empty: bool = False, 
-                                 grand_total: bool = True):
+                                 grand_total: bool = True) -> pd.DataFrame:
     """Generate all aggregation levels for a set of columns in a dataframe, for non-exclusive categories.
 
     Creates aggregations over all combinations of categorical variables specified in `groupcols`
@@ -122,10 +105,10 @@ def all_combos_non_exclusive_agg(df: pd.DataFrame,
         if col not in df.columns:
             raise ValueError(f"Column '{col}' not found in DataFrame.")
 
-        items   = list(df[col].unique())
-        keys    = [str(x) for x in items]
-        values  = [[x] for x in items]
-        mapping = dict(zip(keys, values))
+        items: list[Any] = list(df[col].unique())
+        keys: list[str] = [str(x) for x in items]
+        values: list[list[Any]] = [[x] for x in items]
+        mapping: dict[str, list[Any] | str] = dict(zip(keys, values))
 
         if col not in category_mappings.keys():
             category_mappings[col] = mapping
@@ -152,19 +135,19 @@ def all_combos_non_exclusive_agg(df: pd.DataFrame,
 
 
     for var in category_mappings.keys():
-        ncat = len(category_mappings[var])
+        ncat: int = len(category_mappings[var])
 
         pivot_names[var] = ["__" + var + "__" + str(i) for i in range(ncat)]
-        all_pivot_names  = all_pivot_names + pivot_names[var]
+        all_pivot_names: list[str]  = all_pivot_names + pivot_names[var]
 
-        x = df[var].astype("str")
+        x: pd.Series = df[var].astype("str")
         x[:] = "__NA__" # using pd.NA does not work as intended with .melt()
 
-        for i, mapping in enumerate(category_mappings[var].items()):
-            y = x.copy()
-            newval = mapping[0]
-            oldvals = parse_mapping(mapping[1], x=df[var])
-            pivot_name = pivot_names[var][i]
+        for i, pairmap in enumerate(category_mappings[var].items()):
+            y: pd.Series = x.copy()
+            newval: str = pairmap[0]
+            oldvals: list[Any] | str | Any = parse_mapping(pairmap[1], x=df[var])
+            pivot_name: str = pivot_names[var][i]
 
             y.loc[df[var].isin(oldvals)] = newval
             df[pivot_name] = y
@@ -183,7 +166,7 @@ def all_combos_non_exclusive_agg(df: pd.DataFrame,
     tbl = tbl.groupby(pivot_vars).agg(aggargs).reset_index()
 
     if grand_total:
-        total_df = df.copy()
+        total_df: pd.DataFrame = df.copy()
 
         for var in pivot_vars:
             total_df[var] = totalcodes[var]
@@ -191,133 +174,150 @@ def all_combos_non_exclusive_agg(df: pd.DataFrame,
         tbl = tbl.reset_index(drop=True)
 
     if keep_empty:
-        all_combos = list(product(*[tbl[v].unique() for v in pivot_vars]))
-        all_combos_df = pd.DataFrame(np.array(all_combos), columns=pivot_vars)
+        all_combos: list[Any] = list(product(*[tbl[v].unique() for v in pivot_vars]))
+        all_combos_df: pd.DataFrame = pd.DataFrame(np.array(all_combos), columns=pivot_vars)
 
         tbl = pd.merge(all_combos_df, tbl, on=pivot_vars, how="left")
 
     return tbl
 
 
-
-category_mappings = {
-    "Alder": {
-        "15-24": range(15, 25),
-        "25-34": range(25, 35),
-        "35-44": range(35, 45),
-        "45-54": range(45, 55),
-        "55-66": range(55, 67),
-        "15-21": range(15, 22),
-        "22-30": range(22, 31),
-        "31-40": range(31, 41),
-        "41-50": range(41, 51),
-        "51-66": range(51, 67),
-        "15-30": range(15, 31),
-        "31-45": range(31, 46),
-        "46-66": range(46, 67),
-        # "Total": range(15, 67)
-        "Total": "__ALL__"
-    },
-    "syss_student": {
-        "01": ["01", "02"], 
-        "02": ["03", "04"],
-        "03": ["02"],
-        "04": ["04"],
-        # "Total": ["01", "02", "03", "04"]
-        "Total": "__ALL__"
-    },
-    "Kjonn": {
-        "Menn": ["1"],
-        "Kvinner": ["2"],
-        "Begge": ["1", "2"]
+if __name__ == "__main__":
+    # Define the categorical bins based on the metadata
+    gender_bins = {"1": "Menn", "2": "Kvinner"}
+    
+    # Generate synthetic data
+    np.random.seed(42)
+    num_samples = 100
+    
+    synthetic_data = pd.DataFrame({
+        "Tid": np.random.choice(["2021", "2022", "2023"], num_samples),
+        "UtdanningOppl": np.random.choice(list(range(1,19)), num_samples),
+        "Kjonn": np.random.choice(list(gender_bins.keys()), num_samples),
+        "Alder": np.random.randint(15, 67, num_samples),  # Ages between 15 and 66
+        "syss_student": np.random.choice(["01", "02", "03", "04"], num_samples),
+        "n": 1
+    })
+    
+    
+    category_mappings = {
+        "Alder": {
+            "15-24": range(15, 25),
+            "25-34": range(25, 35),
+            "35-44": range(35, 45),
+            "45-54": range(45, 55),
+            "55-66": range(55, 67),
+            "15-21": range(15, 22),
+            "22-30": range(22, 31),
+            "31-40": range(31, 41),
+            "41-50": range(41, 51),
+            "51-66": range(51, 67),
+            "15-30": range(15, 31),
+            "31-45": range(31, 46),
+            "46-66": range(46, 67),
+            # "Total": range(15, 67)
+            "Total": "__ALL__"
+        },
+        "syss_student": {
+            "01": ["01", "02"], 
+            "02": ["03", "04"],
+            "03": ["02"],
+            "04": ["04"],
+            # "Total": ["01", "02", "03", "04"]
+            "Total": "__ALL__"
+        },
+        "Kjonn": {
+            "Menn": ["1"],
+            "Kvinner": ["2"],
+            "Begge": ["1", "2"]
+        }
     }
-}
-
-
-tbl = all_combos_non_exclusive_agg(synthetic_data, 
-                             groupcols = [],
-                             category_mappings=category_mappings,
-                             valuecols = ["n"],
-                             aggargs={"n": "sum"})
-
-tbl.loc[(tbl["Alder"] == "15-24") & (tbl["syss_student"] == "01"), :]
-# 7 rows
-synthetic_data.loc[(synthetic_data["Alder"] >= 15) &
-                   (synthetic_data["Alder"] <= 24) &
-                   synthetic_data["syss_student"].isin(["01", "02"]), :]
-#>      Tid  UtdanningOppl Kjonn  Alder syss_student  Deltakere age_total syss_student_total  n
-#> 24  2021              1     1     22           02          1     Total              Total  1
-#> 46  2022             11     2     20           01          1     Total              Total  1
-#> 62  2022              3     1     17           01          1     Total              Total  1
-#> 67  2022              5     1     17           02          1     Total              Total  1
-#> 76  2022              7     1     16           01          1     Total              Total  1
-#> 79  2022             17     2     16           01          1     Total              Total  1
-#> 84  2021              2     2     23           02          1     Total              Total  1
-
-
-category_mappings = {
-    "Alder": {
-        "15-24": range(15, 25),
-        "25-34": range(25, 35),
-        "35-44": range(35, 45),
-        "45-54": range(45, 55),
-        "55-66": range(55, 67),
-        "15-21": range(15, 22),
-        "22-30": range(22, 31),
-        "31-40": range(31, 41),
-        "41-50": range(41, 51),
-        "51-66": range(51, 67),
-        "15-30": range(15, 31),
-        "31-45": range(31, 46),
-        "46-66": range(46, 67),
-    },
-    "syss_student": {
-        "01-02": ["01", "02"], 
-        "03-04": ["03", "04"],
-        "02": ["02"],
-        "04": ["04"],
-    },
-#    "Kjonn": {
-#        "Menn": ["1"],
-#        "Kvinner": ["2"],
-#    }
-}
-
-
-totalcodes = {
-        "Alder": "Total",
-        "syss_student": "Total",
-        "Kjonn": "Begge"
-}
-
-
-tbl = all_combos_non_exclusive_agg(synthetic_data, 
-                             groupcols = ["Kjonn"],
-                             category_mappings=category_mappings,
-                             totalcodes=totalcodes,
-                             valuecols = ["n"],
-                             aggargs={"n": "sum"},
-                             grand_total=True)
-tbl.loc[tbl["n"].isna()]
-#> Out[39]: 
-#> Empty DataFrame
-#> Columns: [Alder, syss_student, Kjonn, n]
-#> Index: []
-synthetic_data.loc[(synthetic_data["Alder"] >= 15) &
-                   (synthetic_data["Alder"] <= 21) &
-                   synthetic_data["syss_student"].isin(["01", "02"]), :]
-
-tbl = all_combos_non_exclusive_agg(synthetic_data, 
-                             groupcols = [],
-                             category_mappings=category_mappings,
-                             totalcodes=totalcodes,
-                             valuecols = ["n"],
-                             aggargs={"n": "sum"},
-                             grand_total=True, 
-                             keep_empty=True)
-tbl.loc[tbl["n"].isna()]
-#> Out[40]: 
-#>     Alder syss_student    Kjonn   n
-#> 7   15-21           03  Kvinner NaN
-#> 55  22-30           04  Kvinner NaN
-#> 68  25-34           03     Menn NaN
+    
+    
+    tbl = all_combos_non_exclusive_agg(synthetic_data, 
+                                 groupcols = [],
+                                 category_mappings=category_mappings,
+                                 valuecols = ["n"],
+                                 aggargs={"n": "sum"})
+    
+    tbl.loc[(tbl["Alder"] == "15-24") & (tbl["syss_student"] == "01"), :]
+    # 7 rows
+    synthetic_data.loc[(synthetic_data["Alder"] >= 15) &
+                       (synthetic_data["Alder"] <= 24) &
+                       synthetic_data["syss_student"].isin(["01", "02"]), :]
+    #>      Tid  UtdanningOppl Kjonn  Alder syss_student  Deltakere age_total syss_student_total  n
+    #> 24  2021              1     1     22           02          1     Total              Total  1
+    #> 46  2022             11     2     20           01          1     Total              Total  1
+    #> 62  2022              3     1     17           01          1     Total              Total  1
+    #> 67  2022              5     1     17           02          1     Total              Total  1
+    #> 76  2022              7     1     16           01          1     Total              Total  1
+    #> 79  2022             17     2     16           01          1     Total              Total  1
+    #> 84  2021              2     2     23           02          1     Total              Total  1
+    
+    
+    category_mappings = {
+        "Alder": {
+            "15-24": range(15, 25),
+            "25-34": range(25, 35),
+            "35-44": range(35, 45),
+            "45-54": range(45, 55),
+            "55-66": range(55, 67),
+            "15-21": range(15, 22),
+            "22-30": range(22, 31),
+            "31-40": range(31, 41),
+            "41-50": range(41, 51),
+            "51-66": range(51, 67),
+            "15-30": range(15, 31),
+            "31-45": range(31, 46),
+            "46-66": range(46, 67),
+        },
+        "syss_student": {
+            "01-02": ["01", "02"], 
+            "03-04": ["03", "04"],
+            "02": ["02"],
+            "04": ["04"],
+        },
+    #    "Kjonn": {
+    #        "Menn": ["1"],
+    #        "Kvinner": ["2"],
+    #    }
+    }
+    
+    
+    totalcodes = {
+            "Alder": "Total",
+            "syss_student": "Total",
+            "Kjonn": "Begge"
+    }
+    
+    
+    tbl = all_combos_non_exclusive_agg(synthetic_data, 
+                                 groupcols = ["Kjonn"],
+                                 category_mappings=category_mappings,
+                                 totalcodes=totalcodes,
+                                 valuecols = ["n"],
+                                 aggargs={"n": "sum"},
+                                 grand_total=True)
+    tbl.loc[tbl["n"].isna()]
+    #> Out[39]: 
+    #> Empty DataFrame
+    #> Columns: [Alder, syss_student, Kjonn, n]
+    #> Index: []
+    synthetic_data.loc[(synthetic_data["Alder"] >= 15) &
+                       (synthetic_data["Alder"] <= 21) &
+                       synthetic_data["syss_student"].isin(["01", "02"]), :]
+    
+    tbl = all_combos_non_exclusive_agg(synthetic_data, 
+                                 groupcols = [],
+                                 category_mappings=category_mappings,
+                                 totalcodes=totalcodes,
+                                 valuecols = ["n"],
+                                 aggargs={"n": "sum"},
+                                 grand_total=True, 
+                                 keep_empty=True)
+    tbl.loc[tbl["n"].isna()]
+    #> Out[40]: 
+    #>     Alder syss_student    Kjonn   n
+    #> 7   15-21           03  Kvinner NaN
+    #> 55  22-30           04  Kvinner NaN
+    #> 68  25-34           03     Menn NaN
