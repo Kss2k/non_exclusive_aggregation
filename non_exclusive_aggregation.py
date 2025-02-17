@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 from typing import Any
+from collections.abc import Callable
 
 # Define the categorical bins based on the metadata
 gender_bins = {"1": "Menn", "2": "Kvinner"}
@@ -15,70 +16,8 @@ synthetic_data = pd.DataFrame({
     "Kjonn": np.random.choice(list(gender_bins.keys()), num_samples),
     "Alder": np.random.randint(15, 67, num_samples),  # Ages between 15 and 66
     "syss_student": np.random.choice(["01", "02", "03", "04"], num_samples),
-    "Deltakere": 1
+    "n": 1
 })
-
-# Generate a random duplication factor for each row (simulating different numbers of people in groups)
-np.random.seed(42)
-
-def to_range(x: str):
-    start, stop = x.split("-")
-    return (int(start), int(stop))
-
-alder_cat_1_str = ["15-24", "25-34", "35-44", "45-54", "55-66"]
-alder_cat_2_str = ["15-21", "22-30", "31-40", "41-50", "51-66"]
-alder_cat_3_str = ["15-30", "31-45", "46-66"]
-
-def categorize_age(x: pd.Series, cat: list[str]):
-    y = x.astype("str")
-    for age_range in cat:
-        start, stop = to_range(age_range)
-        y.loc[(x >= start) & (x <= stop)] = age_range
-
-    return y
-
-syss_stud_cat_1 = {"01": ["01", "02"], "02": ["03", "04"]}
-syss_stud_cat_2 = {"03": ["02"], "04": ["04"]}
-
-def categorize_nominal(x: pd.Series, cat: dict):
-    y = x.astype("str")
-    y[:] = ""
-    for key, value in cat.items():
-        y.loc[x.isin(value)] = key
-
-    return y
-
-synthetic_data["age_1"] = categorize_age(synthetic_data["Alder"], alder_cat_1_str)
-synthetic_data["age_2"] = categorize_age(synthetic_data["Alder"], alder_cat_2_str)
-synthetic_data["age_3"] = categorize_age(synthetic_data["Alder"], alder_cat_3_str)
-synthetic_data["age_total"] = "Total"
-
-synthetic_data["syss_student_1"] = categorize_nominal(synthetic_data["syss_student"], syss_stud_cat_1)
-synthetic_data["syss_student_2"] = categorize_nominal(synthetic_data["syss_student"], syss_stud_cat_2)
-synthetic_data["syss_student_total"] = "Total"
-synthetic_data["n"] = 1
-
-tbl = (
-    synthetic_data.groupby(["Kjonn", 
-                            "age_1", "age_2", "age_3", "age_total",
-                            "syss_student_1", "syss_student_2", "syss_student_total",
-                            ]).agg({"n": "sum"}).reset_index()
-    .melt(id_vars = ["Kjonn", "syss_student_1", "syss_student_2", "syss_student_total", "n"], 
-          value_vars = ["age_1", "age_2", "age_3", "age_total"],
-          var_name = "age_group", value_name = "alder")
-    .melt(id_vars = ["Kjonn", "n", "age_group", "alder"],
-          value_vars = ["syss_student_1", "syss_student_2", "syss_student_total"],
-          var_name = "syss_student_group", value_name = "syss_student")
-    .drop(labels=["age_group", "syss_student_group"], axis=1)
-    .groupby(["Kjonn", "alder", "syss_student"]).agg({"n": "sum"}).reset_index()
-)
-
-# testing:
-# 7 rows
-synthetic_data.loc[(synthetic_data["Alder"] >= 15) &
-                   (synthetic_data["Alder"] <= 24) &
-                   synthetic_data["syss_student"].isin(["01", "02"]), :]
-tbl.loc[(tbl["alder"] == "15-24") & (tbl["syss_student"] == "01"), :]
 
 
 # Writing a genaralized function
@@ -89,15 +28,33 @@ def parse_mapping(mapping, x: pd.Series):
         return mapping
 
 
-def all_combos_non_exclusive_agg(df, groupcols, 
+def all_combos_non_exclusive_agg(df: pd.DataFrame, 
+                                 groupcols: list[str], 
                                  category_mappings: dict[str, dict[Any, Any]], 
-                                 valuecols=None, aggargs=None, 
-                                 fillna_dict=None, keep_empty=False, grand_total=True): # not implemented yet
-    df = df.copy()[groupcols + valuecols + list(category_mappings.keys())]
+                                 valuecols: list[str] = [], 
+                                 aggargs: None | dict[str, Any] | Callable | str | list  = None,
+                                 totalcodes: None | dict[str, str] = None, 
+                                 keep_empty: bool = False, 
+                                 grand_total: bool = True): # not implemented yet
+    all_cols: list[str] = groupcols + valuecols + list(category_mappings.keys())
+    df = df.copy()[all_cols]
+
+    if totalcodes: 
+        for var, code in totalcodes.items():
+            category_mappings[var][code] = "__ALL__"
 
     pivot_vars: list[str] = list(category_mappings.keys())
     pivot_names: dict[str, list[str]] = {}
     all_pivot_names: list[str] = []
+    
+
+    # fill in default for the rest, used for `grand_total`
+    if not totalcodes:
+        totalcodes = {}
+    for var in pivot_vars + groupcols:
+        if var not in totalcodes.keys():
+            totalcodes[var] = "Total"
+
 
     for var in category_mappings.keys():
         ncat = len(category_mappings[var])
@@ -117,18 +74,30 @@ def all_combos_non_exclusive_agg(df, groupcols,
             y.loc[df[var].isin(oldvals)] = newval
             df[pivot_name] = y
   
-    tbl = df.groupby(groupcols + all_pivot_names).agg(aggargs).reset_index()
+    tbl: pd.DataFrame = df.groupby(groupcols + all_pivot_names).agg(aggargs).reset_index()
 
     id_vars: set[str] = set(groupcols + all_pivot_names + valuecols)
     for var in category_mappings.keys():
         id_vars = id_vars - set(pivot_names[var])
-        tbl = tbl.melt(id_vars = id_vars, 
+        tbl = tbl.melt(id_vars = list(id_vars), 
                        value_vars = pivot_names[var],
                        var_name = "__variable__", value_name = var)
         tbl = tbl.loc[tbl[var] != "__NA__", :].drop(labels=["__variable__"], axis=1)
         id_vars = id_vars.union([var])
 
-    return tbl.groupby(groupcols + pivot_vars).agg(aggargs).reset_index()
+    tbl = tbl.groupby(groupcols + pivot_vars).agg(aggargs).reset_index()
+
+    if grand_total:
+        total_df = df.copy()
+        grouping: list[str] = groupcols + pivot_vars
+
+        for var in grouping:
+            total_df[var] = totalcodes[var]
+        tbl = pd.concat((tbl, total_df.groupby(grouping).agg(aggargs).reset_index()))
+        tbl = tbl.reset_index(drop=True)
+
+    return tbl
+
 
 
 category_mappings = {
@@ -184,3 +153,46 @@ synthetic_data.loc[(synthetic_data["Alder"] >= 15) &
 #> 76  2022              7     1     16           01          1     Total              Total  1
 #> 79  2022             17     2     16           01          1     Total              Total  1
 #> 84  2021              2     2     23           02          1     Total              Total  1
+
+
+category_mappings = {
+    "Alder": {
+        "15-24": range(15, 25),
+        "25-34": range(25, 35),
+        "35-44": range(35, 45),
+        "45-54": range(45, 55),
+        "55-66": range(55, 67),
+        "15-21": range(15, 22),
+        "22-30": range(22, 31),
+        "31-40": range(31, 41),
+        "41-50": range(41, 51),
+        "51-66": range(51, 67),
+        "15-30": range(15, 31),
+        "31-45": range(31, 46),
+        "46-66": range(46, 67),
+    },
+    "syss_student": {
+        "01": ["01", "02"], 
+        "02": ["03", "04"],
+        "03": ["02"],
+        "04": ["04"],
+    },
+    "Kjonn": {
+        "Menn": ["1"],
+        "Kvinner": ["2"],
+    }
+}
+
+totalcodes = {
+        "Alder": "Total",
+        "syss_student": "Total",
+        "Kjonn": "Begge"
+}
+
+tbl = all_combos_non_exclusive_agg(synthetic_data, 
+                             groupcols = [],
+                             category_mappings=category_mappings,
+                             totalcodes=totalcodes,
+                             valuecols = ["n"],
+                             aggargs={"n": "sum"},
+                             grand_total=True)
