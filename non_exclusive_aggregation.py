@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 from typing import Any
 from collections.abc import Callable
+from itertools import product
 
 # Define the categorical bins based on the metadata
 gender_bins = {"1": "Menn", "2": "Kvinner"}
@@ -36,6 +37,86 @@ def all_combos_non_exclusive_agg(df: pd.DataFrame,
                                  totalcodes: None | dict[str, str] = None, 
                                  keep_empty: bool = False, 
                                  grand_total: bool = True): # not implemented yet
+    """Generate all aggregation levels for a set of columns in a dataframe, for non-exclusive categories.
+
+    Creates aggregations over all combinations of categorical variables specified in `groupcols`
+    and applies aggregation functions on `valuecols`. Allows for inclusion of grand totals
+    and customized fill values for missing groups, similar to "proc means" in SAS. categories are 
+    defined by a dictionary of mappings in `category_mappings`, and can be non-exclusive.
+
+    Args:
+        df: DataFrame to aggregate.
+        groupcols: List of columns to group by.
+        category_mappings: Dictionary of dictionaries, where each key is a column name and each value is a dictionary of mappings. 
+            '__ALL__' can be used to indicate 'all values' in a column, and is used for totals.
+        valuecols: List of columns to apply aggregation functions on. Defaults to None, in which case all numeric columns are used.
+        aggargs: Dictionary or function specifying aggregation for each column in `valuecols`. If None, defaults to 'sum' for each column in `valuecols`.
+        totalcodes: Dictionary specifying values to use as labels representing totals in each column.
+        keep_empty: If True, preserves empty groups in the output.
+        grand_total: Dictionary or string to indicate a grand total row. If a dictionary, the values are applied in each corresponding `groupcols`.
+
+    Returns:
+        DataFrame with all aggregation levels for the specified columns.
+
+    Examples:
+        >>> # Define the categorical bins based on the metadata
+            gender_bins = {"1": "Menn", "2": "Kvinner"}
+
+            # Generate synthetic data
+            np.random.seed(42)
+            num_samples = 100
+
+            synthetic_data = pd.DataFrame({
+                "Tid": np.random.choice(["2021", "2022", "2023"], num_samples),
+                "UtdanningOppl": np.random.choice(list(range(1,19)), num_samples),
+                "Kjonn": np.random.choice(list(gender_bins.keys()), num_samples),
+                "Alder": np.random.randint(15, 67, num_samples),  # Ages between 15 and 66
+                "syss_student": np.random.choice(["01", "02", "03", "04"], num_samples),
+                "n": 1
+            })
+
+        >>> category_mappings = {
+                "Alder": {
+                    "15-24": range(15, 25),
+                    "25-34": range(25, 35),
+                    "35-44": range(35, 45),
+                    "45-54": range(45, 55),
+                    "55-66": range(55, 67),
+                    "15-21": range(15, 22),
+                    "22-30": range(22, 31),
+                    "31-40": range(31, 41),
+                    "41-50": range(41, 51),
+                    "51-66": range(51, 67),
+                    "15-30": range(15, 31),
+                    "31-45": range(31, 46),
+                    "46-66": range(46, 67),
+                },
+                "syss_student": {
+                    "01": ["01", "02"], 
+                    "02": ["03", "04"],
+                    "03": ["02"],
+                    "04": ["04"],
+                },
+                "Kjonn": {
+                    "Menn": ["1"],
+                    "Kvinner": ["2"],
+                }
+            }
+
+    >>> totalcodes = {
+                "Alder": "Total",
+                "syss_student": "Total",
+                "Kjonn": "Begge"
+        }
+
+    >>> all_combos_non_exclusive_agg(synthetic_data, 
+                                     groupcols = [],
+                                     category_mappings=category_mappings,
+                                     totalcodes=totalcodes,
+                                     valuecols = ["n"],
+                                     aggargs={"n": "sum"},
+                                     grand_total=True)
+    """                                
     all_cols: list[str] = groupcols + valuecols + list(category_mappings.keys())
     df = df.copy()[all_cols]
 
@@ -95,6 +176,13 @@ def all_combos_non_exclusive_agg(df: pd.DataFrame,
             total_df[var] = totalcodes[var]
         tbl = pd.concat((tbl, total_df.groupby(grouping).agg(aggargs).reset_index()))
         tbl = tbl.reset_index(drop=True)
+
+    if keep_empty:
+        grouping = groupcols + pivot_vars
+        all_combos = list(product(*[tbl[v].unique() for v in grouping]))
+        all_combos_df = pd.DataFrame(np.array(all_combos), columns=grouping)
+
+        tbl = pd.merge(all_combos_df, tbl, on=grouping, how="left")
 
     return tbl
 
@@ -183,11 +271,13 @@ category_mappings = {
     }
 }
 
+
 totalcodes = {
         "Alder": "Total",
         "syss_student": "Total",
         "Kjonn": "Begge"
 }
+
 
 tbl = all_combos_non_exclusive_agg(synthetic_data, 
                              groupcols = [],
@@ -196,3 +286,23 @@ tbl = all_combos_non_exclusive_agg(synthetic_data,
                              valuecols = ["n"],
                              aggargs={"n": "sum"},
                              grand_total=True)
+tbl.loc[tbl["n"].isna()]
+#> Out[39]: 
+#> Empty DataFrame
+#> Columns: [Alder, syss_student, Kjonn, n]
+#> Index: []
+
+tbl = all_combos_non_exclusive_agg(synthetic_data, 
+                             groupcols = [],
+                             category_mappings=category_mappings,
+                             totalcodes=totalcodes,
+                             valuecols = ["n"],
+                             aggargs={"n": "sum"},
+                             grand_total=True, 
+                             keep_empty=True)
+tbl.loc[tbl["n"].isna()]
+#> Out[40]: 
+#>     Alder syss_student    Kjonn   n
+#> 7   15-21           03  Kvinner NaN
+#> 55  22-30           04  Kvinner NaN
+#> 68  25-34           03     Menn NaN
