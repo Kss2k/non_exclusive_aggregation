@@ -30,13 +30,13 @@ def parse_mapping(mapping, x: pd.Series):
 
 
 def all_combos_non_exclusive_agg(df: pd.DataFrame, 
-                                 groupcols: list[str], 
-                                 category_mappings: dict[str, dict[Any, Any]], 
+                                 groupcols: list[str] = [], 
+                                 category_mappings: dict[str, dict[Any, Any]] = {}, 
                                  valuecols: list[str] = [], 
                                  aggargs: None | dict[str, Any] | Callable | str | list  = None,
                                  totalcodes: None | dict[str, str] = None, 
                                  keep_empty: bool = False, 
-                                 grand_total: bool = True): # not implemented yet
+                                 grand_total: bool = True):
     """Generate all aggregation levels for a set of columns in a dataframe, for non-exclusive categories.
 
     Creates aggregations over all combinations of categorical variables specified in `groupcols`
@@ -117,7 +117,21 @@ def all_combos_non_exclusive_agg(df: pd.DataFrame,
                                      aggargs={"n": "sum"},
                                      grand_total=True)
     """                                
-    all_cols: list[str] = groupcols + valuecols + list(category_mappings.keys())
+
+    for col in groupcols:
+        if col not in df.columns:
+            raise ValueError(f"Column '{col}' not found in DataFrame.")
+
+        items   = list(df[col].unique())
+        keys    = [str(x) for x in items]
+        values  = [[x] for x in items]
+        mapping = dict(zip(keys, values))
+
+        if col not in category_mappings.keys():
+            category_mappings[col] = mapping
+
+
+    all_cols: list[str] = valuecols + list(category_mappings.keys())
     df = df.copy()[all_cols]
 
     if totalcodes: 
@@ -132,7 +146,7 @@ def all_combos_non_exclusive_agg(df: pd.DataFrame,
     # fill in default for the rest, used for `grand_total`
     if not totalcodes:
         totalcodes = {}
-    for var in pivot_vars + groupcols:
+    for var in pivot_vars:
         if var not in totalcodes.keys():
             totalcodes[var] = "Total"
 
@@ -155,9 +169,9 @@ def all_combos_non_exclusive_agg(df: pd.DataFrame,
             y.loc[df[var].isin(oldvals)] = newval
             df[pivot_name] = y
   
-    tbl: pd.DataFrame = df.groupby(groupcols + all_pivot_names).agg(aggargs).reset_index()
+    tbl: pd.DataFrame = df.groupby(all_pivot_names).agg(aggargs).reset_index()
 
-    id_vars: set[str] = set(groupcols + all_pivot_names + valuecols)
+    id_vars: set[str] = set(all_pivot_names + valuecols)
     for var in category_mappings.keys():
         id_vars = id_vars - set(pivot_names[var])
         tbl = tbl.melt(id_vars = list(id_vars), 
@@ -166,23 +180,21 @@ def all_combos_non_exclusive_agg(df: pd.DataFrame,
         tbl = tbl.loc[tbl[var] != "__NA__", :].drop(labels=["__variable__"], axis=1)
         id_vars = id_vars.union([var])
 
-    tbl = tbl.groupby(groupcols + pivot_vars).agg(aggargs).reset_index()
+    tbl = tbl.groupby(pivot_vars).agg(aggargs).reset_index()
 
     if grand_total:
         total_df = df.copy()
-        grouping: list[str] = groupcols + pivot_vars
 
-        for var in grouping:
+        for var in pivot_vars:
             total_df[var] = totalcodes[var]
-        tbl = pd.concat((tbl, total_df.groupby(grouping).agg(aggargs).reset_index()))
+        tbl = pd.concat((tbl, total_df.groupby(pivot_vars).agg(aggargs).reset_index()))
         tbl = tbl.reset_index(drop=True)
 
     if keep_empty:
-        grouping = groupcols + pivot_vars
-        all_combos = list(product(*[tbl[v].unique() for v in grouping]))
-        all_combos_df = pd.DataFrame(np.array(all_combos), columns=grouping)
+        all_combos = list(product(*[tbl[v].unique() for v in pivot_vars]))
+        all_combos_df = pd.DataFrame(np.array(all_combos), columns=pivot_vars)
 
-        tbl = pd.merge(all_combos_df, tbl, on=grouping, how="left")
+        tbl = pd.merge(all_combos_df, tbl, on=pivot_vars, how="left")
 
     return tbl
 
@@ -260,15 +272,15 @@ category_mappings = {
         "46-66": range(46, 67),
     },
     "syss_student": {
-        "01": ["01", "02"], 
-        "02": ["03", "04"],
-        "03": ["02"],
+        "01-02": ["01", "02"], 
+        "03-04": ["03", "04"],
+        "02": ["02"],
         "04": ["04"],
     },
-    "Kjonn": {
-        "Menn": ["1"],
-        "Kvinner": ["2"],
-    }
+#    "Kjonn": {
+#        "Menn": ["1"],
+#        "Kvinner": ["2"],
+#    }
 }
 
 
@@ -280,7 +292,7 @@ totalcodes = {
 
 
 tbl = all_combos_non_exclusive_agg(synthetic_data, 
-                             groupcols = [],
+                             groupcols = ["Kjonn"],
                              category_mappings=category_mappings,
                              totalcodes=totalcodes,
                              valuecols = ["n"],
@@ -291,6 +303,9 @@ tbl.loc[tbl["n"].isna()]
 #> Empty DataFrame
 #> Columns: [Alder, syss_student, Kjonn, n]
 #> Index: []
+synthetic_data.loc[(synthetic_data["Alder"] >= 15) &
+                   (synthetic_data["Alder"] <= 21) &
+                   synthetic_data["syss_student"].isin(["01", "02"]), :]
 
 tbl = all_combos_non_exclusive_agg(synthetic_data, 
                              groupcols = [],
