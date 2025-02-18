@@ -321,3 +321,87 @@ if __name__ == "__main__":
     #> 7   15-21           03  Kvinner NaN
     #> 55  22-30           04  Kvinner NaN
     #> 68  25-34           03     Menn NaN
+
+
+    test_mappings = {
+        "Alder": {
+            "15-24": range(15, 25),
+            "25-34": range(25, 35),
+            "35-44": range(35, 45),
+            "45-54": range(45, 55),
+            "55-66": range(55, 67),
+            "15-21": range(15, 22),
+            "22-30": range(22, 31),
+            "31-40": range(31, 41),
+            "41-50": range(41, 51),
+            "51-66": range(51, 67),
+            "15-30": range(15, 31),
+            "31-45": range(31, 46),
+            "46-66": range(46, 67),
+            "Total": range(0, 100)
+        },
+        "syss_student": {
+            "01-02": ["01", "02"], 
+            "03-04": ["03", "04"],
+            "02": ["02"],
+            "04": ["04"],
+            "Total": ["01", "02", "03", "04"]
+        },
+        "Kjonn": {
+            "Menn": ["1"],
+            "Kvinner": ["2"],
+            "Begge": ["1", "2"]
+        }
+    }
+
+    def print_indented(x, w = 4):
+        pad = " " * w
+        print(pad + str(x).replace("\n", "\n" + pad))
+
+    def print_thin_sep(w=57):
+        print("-" * w)
+
+    def print_thick_sep(w=57):
+        print("=" * w)
+
+    tbl = all_combos_non_exclusive_agg(synthetic_data,
+                                       groupcols = [],
+                                       category_mappings=test_mappings,
+                                       valuecols = ["n"],
+                                       aggargs={"n": "sum"})
+
+    cat_alder = test_mappings["Alder"]
+    cat_student = test_mappings["syss_student"]
+    cat_kjonn = test_mappings["Kjonn"]
+
+    for alder in cat_alder:
+        for student in cat_student:
+            for kjonn in cat_kjonn:
+                query = synthetic_data.loc[(synthetic_data["Alder"].isin(cat_alder[alder])) &
+                                           (synthetic_data["syss_student"].isin(cat_student[student])) &
+                                           (synthetic_data["Kjonn"].isin(cat_kjonn[kjonn])), :]
+                n_observed = query.shape[0]
+                n_predicted = tbl.loc[(tbl["Alder"] == alder) &
+                                      (tbl["syss_student"] == student) &
+                                      (tbl["Kjonn"] == kjonn), "n"].values
+                n_predicted = 0 if len(n_predicted) == 0 else n_predicted[0]
+
+                print_thick_sep()
+                print(f"\tQuery: {alder}, {student}, {kjonn}")
+                print(f"\tObserved: {n_observed}, Predicted: {n_predicted}, Diff: {n_observed - n_predicted}")
+                print_thick_sep()
+                print("Table:")
+                print_indented(tbl.loc[(tbl["Alder"] == alder) &
+                              (tbl["syss_student"] == student) &
+                              (tbl["Kjonn"] == kjonn), :])
+                print_thin_sep()
+                print("Data:")
+                print_indented(query)
+                print_thin_sep()
+                print("\n\n")
+                assert n_observed == n_predicted
+
+
+
+
+
